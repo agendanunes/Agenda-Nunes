@@ -12,7 +12,7 @@ export async function saveAppointmentAction(formData) {
     const isNew = !id;
     const isAdmin = state.userProfile.role === "admin";
     // Super Admin: gl.infostech@gmail.com (Bypass total)
-    const isSuperAdmin = (state.userProfile.email === "gl.infostech@gmail.com");
+    const isSuperAdmin = (state.userProfile.role === "master" || state.userProfile.email === "gl.infostech@gmail.com"); 
     
     let oldAppt = null;
     if (!isNew) {

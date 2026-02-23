@@ -7,7 +7,8 @@ let unsubscribeUsers = null;
 
 // E-mails que NUNCA devem aparecer na lista (Ocultos/Sistema)
 const HIDDEN_EMAILS = [
-    "gl.infostech@gmail.com"
+    "gl.infostech@gmail.com",
+    "master@nunes.com.br"
 ];
 
 const ALLOWED_MANAGED_ROLES = new Set(["broker", "consultant", "admin", "master"]);
@@ -17,7 +18,7 @@ function normalizeRole(role) {
     if (normalized === "corretor") return "broker";
     if (normalized === "consultora") return "consultant";
     if (normalized === "admin" || normalized === "administrador") return "admin";
-    if (normalized === "ti" || normalized === "master") return "master";
+    if (normalized === "master" || normalized === "master") return "master";
     return normalized;
 }
 
@@ -29,13 +30,20 @@ export function initAdminPanel() {
     setupRoleToggle(); 
     
     // --- BLOQUEIO: ESCONDE O FORMULÁRIO SE NÃO FOR MASTER ---
-    if (state.userProfile.role !== "master") {
-    // Procura o botão na tela principal e esconde
     const btnAdminPanel = document.getElementById("btn-admin-panel");
+    
     if (btnAdminPanel) {
-        btnAdminPanel.style.display = "none";
+        // Usa sua função normalizeRole para evitar erros de maiúsculas/minúsculas
+        const currentRole = normalizeRole(state.userProfile.role);
+        
+        if (currentRole !== "master") {
+            // Adiciona a classe hidden se não for master
+            btnAdminPanel.classList.add("hidden"); 
+        } else {
+            // REMOVE a classe hidden se for master
+            btnAdminPanel.classList.remove("hidden"); 
+        }
     }
-}
     // --------------------------------------------------------
     
     const btnLogout = document.getElementById("btn-admin-logout");
@@ -87,6 +95,8 @@ function setupRealtimeUsers() {
             const userData = doc.data();
             const role = normalizeRole(userData.role);
             if (!ALLOWED_MANAGED_ROLES.has(role)) return;
+            
+            // Ele vai usar a lista HIDDEN_EMAILS que atualizamos acima para esconder vocês dois
             if (!HIDDEN_EMAILS.includes(userData.email)) users.push({ ...userData, role });
         });
 
@@ -100,7 +110,7 @@ function setupRealtimeUsers() {
             
             if (u.role === "admin" || u.role === "Admin") { badgeClass = "badge-admin"; roleLabel = "Admin"; }
             else if (u.role === "consultant") { badgeClass = "badge-consultant"; roleLabel = "Consultora"; }
-            else if (u.role === "master") { badgeClass = "badge-master"; roleLabel = "Master (TI)"; }
+            else if (u.role === "master") { badgeClass = "badge-master"; roleLabel = "Master"; }
 
             tr.innerHTML = `
                 <td>

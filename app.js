@@ -16,6 +16,7 @@ import { initAuth } from "./auth.js";
 import { setupUIInteractions } from "./interactions.js";
 import { setupAppointmentLogic } from "./appointments.js";
 import { initReports } from "./reports.js";
+import { updateBrokerDropdowns } from "./interactions.js";
 
 const usersRef = collection(db, "users");
 
@@ -110,6 +111,8 @@ function listenToBrokers() {
 
         if (typeof window.populateBrokerSelect === "function") window.populateBrokerSelect();
         if (typeof window.populateAllBrokerSelects === "function") window.populateAllBrokerSelects();
+
+        updateBrokerDropdowns();
     });
 }
 
@@ -120,7 +123,7 @@ function renderUserInfo() {
         admin: "Administrador",
         consultant: "Consultora",
         broker: "Corretor",
-        corretor: "Corretor"
+        master: "Master"
     };
 
     const userInfoDiv = document.querySelector(".user-info");

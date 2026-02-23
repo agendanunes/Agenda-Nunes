@@ -15,9 +15,12 @@ export function isoDate(d) {
 }
 
 export function translateRole(r) { 
-    return r === "admin" ? "Admin" : r === "consultant" ? "Consultora" : "Corretor"; 
+    const role = String(r || "").trim().toLowerCase(); // Transforma tudo em minúsculo antes de ler
+    if (role === "master" || role === "ti") return "Master (TI)";
+    
+    // MUDANÇA AQUI: Se não for nenhum dos acima, devolve "TESTE"
+    return role === "admin" ? "Admin" : role === "consultant" ? "Consultora" : "Corretor"; 
 }
-
 export function getRow(t) { 
     const [h, m] = t.split(":").map(Number); 
     return (h - TIME_START) * 2 + (m === 30 ? 1 : 0) + 2; 

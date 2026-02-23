@@ -256,9 +256,12 @@ function setupGlobalViewFunctions() {
         document.getElementById(`btn-${view}`).classList.add("active");
         
         const brokerSel = document.getElementById("view-broker-select");
-        if (view === "day") brokerSel.classList.add("hidden");
-        else brokerSel.classList.remove("hidden");
-        
+        if (view === "day") {
+            brokerSel.classList.add("hidden");
+        } else {
+            brokerSel.classList.remove("hidden");
+            updateBrokerDropdowns(); // <-- Força a atualização do DOM na hora!
+        }
         updateHeaderDate();
         renderMain();
         if (view !== "month") scrollToBusinessHours();

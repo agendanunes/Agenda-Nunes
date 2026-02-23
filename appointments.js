@@ -56,19 +56,26 @@ function setupFormSubmit() {
             const saveResult = await saveAppointmentAction(formData);
 
             if (saveResult && saveResult.appointment) {
-                await handleBrokerNotification(
-                    saveResult.appointment.brokerId,
-                    null,
-                    saveResult.actionType || (formData.id ? "update" : "create"),
-                    saveResult.appointment
-                );
-            }
+                // FECHA O MODAL PRIMEIRO (alivia o navegador)
+                if(window.closeModal) window.closeModal();
+                else document.getElementById("modal").classList.remove("open");
 
-            // 3. Sucesso: Fecha modal
-            if(window.closeModal) window.closeModal();
-            else document.getElementById("modal").classList.remove("open");
-
-        } catch (err) {
+                // DÁ UM "RESPIRO" DE 300ms PARA O NAVEGADOR RENDERIZAR O renderMain() DO FIRESTORE
+                setTimeout(async () => {
+                    await handleBrokerNotification(
+                        saveResult.appointment.brokerId,
+                        null,
+                        saveResult.actionType || (formData.id ? "update" : "create"),
+                        saveResult.appointment
+                    );
+                }, 300); // 300 milissegundos já são suficientes para tirar o lag
+                
+            } else {
+                if(window.closeModal) window.closeModal();
+                else document.getElementById("modal").classList.remove("open");
+            } // <-- 1. FALTAVA FECHAR O BLOCO 'ELSE' AQUI
+            
+        } catch (err) { // <-- 2. FALTAVA FECHAR O BLOCO 'TRY' ANTES DO CATCH AQUI
             console.error(err);
             await showDialog("Atenção", err.message);
         } finally {

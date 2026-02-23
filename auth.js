@@ -1,20 +1,21 @@
 import { db, state } from "./config.js";
 import { initAdminPanel } from "./admin-crud.js"; 
+import { translateRole } from "./utils.js"; // <--- ADICIONE ESTA LINHA AQUI
 import { 
     collection, query, where, getDocs, doc, getDoc 
 } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
-
 const SESSION_KEY = "agenda_nunes_user_session";
 
-// Lista de e-mails que viram ADMIN automaticamente
+// Lista de e-mails que viram MASTER automaticamente (Bypass de segurança extra)
 const SUPER_ADMINS = [
-    "gl.infostech@gmail.com"
+    "gl.infostech@gmail.com",
+    "master@nunes.com.br"
 ];
 
 // E-mails que NÃO devem aparecer na lista de Consultoras/Compartilhar
 const HIDDEN_USERS = [
     "gl.infostech@gmail.com",
-    "admin@admin.com"
+    "master@nunes.com.br"
 ];
 
 const AUTH_COLLECTIONS = ["usuarios", "users"];
@@ -114,7 +115,8 @@ function normalizeRole(role) {
 }
 
 function isAdminRole(role) {
-    return normalizeRole(role) === "admin";
+    const r = normalizeRole(role);
+    return r === "admin" || r === "master"; // <-- Adiciona a permissão para o master
 }
 
 export function initAuth(initAppCallback) {
@@ -180,7 +182,7 @@ function setupLoginForm(initAppCallback) {
             };
 
             if (SUPER_ADMINS.includes(normalizeEmail(profile.email))) {
-                profile.role = "admin";
+                profile.role = "master"; // <-- Mudar para master
             }
 
             handleLoginSuccess(profile, initAppCallback);
@@ -218,6 +220,17 @@ function showAdminPanelView() {
 }
 
 function handleLoginSuccess(profile, initAppCallback) {
+    // 1. TRAVA DO MASTER: Garante que o Master seja forçado mesmo apertando F5
+    if (SUPER_ADMINS.includes(normalizeEmail(profile.email))) {
+        profile.role = "master"; 
+    }
+
+    // 2. LOGS DE TESTE NO CONSOLE
+    console.log("====== DEBUG DE LOGIN ======");
+    console.log("E-mail logado:", profile.email);
+    console.log("Cargo interno definido:", profile.role);
+    console.log("============================");
+
     state.userProfile = profile;
     localStorage.setItem(SESSION_KEY, JSON.stringify(profile));
 
@@ -233,7 +246,7 @@ function handleLoginSuccess(profile, initAppCallback) {
     updateUserUI(profile);
 
     // Carrega consultoras (se tiver permissão)
-    if (["admin", "consultant"].includes(normalizeRole(profile.role))) {
+    if (["admin", "consultant", "master"].includes(normalizeRole(profile.role))) { 
         loadConsultantsList();
     }
 
@@ -264,13 +277,34 @@ function handleLogout() {
     if(errEl) errEl.innerText = "";
 }
 
+
 function updateUserUI(profile) {
-    const firstName = profile.name ? profile.name.split(" ")[0] : "Usuário";
-    const userDisplay = document.getElementById("user-display");
-    if (userDisplay) userDisplay.innerText = firstName;
+    if (!profile) return;
+
+    // 1. A TRAVA DEFINITIVA: Força o cargo Master antes de mexer na tela
+    if (SUPER_ADMINS.includes(normalizeEmail(profile.email))) {
+        profile.role = "master";
+    }
+
+    // 2. Atualiza o Nome
+    const nameDisplay = document.getElementById("user-name") || document.getElementById("user-display");
+    if (nameDisplay) {
+        nameDisplay.innerText = profile.name || profile.email;
+    }
+
+    // 3. Atualiza o Cargo (com log de rastreio)
+    const roleDisplay = document.getElementById("role-display");
+    if (roleDisplay) {
+        const cargoFinal = translateRole(profile.role);
+        
+        
+        roleDisplay.innerText = cargoFinal;
+    }
     
+    // 4. Mostra/Esconde o botão de Admin
     const adminPanelBtn = document.getElementById("btn-admin-panel"); 
     if (adminPanelBtn) {
+        // Assume que a função isAdminRole já existe no seu arquivo
         if (isAdminRole(profile.role)) {
             adminPanelBtn.classList.remove('hidden');
             adminPanelBtn.onclick = () => showAdminPanelView();
@@ -289,9 +323,12 @@ async function loadConsultantsList() {
         const q = query(collection(db, "users"), where("role", "in", ["consultant", "admin"]));
         const snapshot = await getDocs(q);
         
-        state.availableConsultants = snapshot.docs
-          .map((doc) => ({ email: normalizeEmail(doc.data().email || doc.id), name: doc.data().name || "" }))
-          // FILTRO: Remove quem estiver na lista HIDDEN_USERS
+       state.availableConsultants = snapshot.docs
+          .map((doc) => ({ 
+              email: normalizeEmail(doc.data().email || doc.id), 
+              name: doc.data().name || "" 
+          }))
+          // FILTRO: Remove apenas quem estiver na lista HIDDEN_USERS
           .filter(u => !HIDDEN_USERS.includes(normalizeEmail(u.email)))
           .sort((a, b) => a.name.localeCompare(b.name));
           
