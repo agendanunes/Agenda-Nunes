@@ -27,24 +27,20 @@ export function initAdminPanel() {
     setupForm();
     setupInputMasks();
     setupRolePlaceholder();
-    setupRoleToggle(); 
-    
-    // --- BLOQUEIO: ESCONDE O FORMULÁRIO SE NÃO FOR MASTER ---
+    setupRoleToggle();
+
+    const currentRole = normalizeRole(state.userProfile?.role);
+    const canManageUsers = currentRole === "master";
+
     const btnAdminPanel = document.getElementById("btn-admin-panel");
-    
     if (btnAdminPanel) {
-        // Usa sua função normalizeRole para evitar erros de maiúsculas/minúsculas
-        const currentRole = normalizeRole(state.userProfile.role);
-        
-        if (currentRole !== "master") {
-            // Adiciona a classe hidden se não for master
-            btnAdminPanel.classList.add("hidden"); 
-        } else {
-            // REMOVE a classe hidden se for master
-            btnAdminPanel.classList.remove("hidden"); 
-        }
+        btnAdminPanel.classList.toggle("hidden", !canManageUsers);
     }
-    // --------------------------------------------------------
+
+    const userFormCard = document.querySelector("#admin-crud-screen .admin-card");
+    if (userFormCard) {
+        userFormCard.classList.toggle("hidden", !canManageUsers);
+    }
     
     const btnLogout = document.getElementById("btn-admin-logout");
     if(btnLogout) {
@@ -96,11 +92,22 @@ function setupRealtimeUsers() {
             const role = normalizeRole(userData.role);
             if (!ALLOWED_MANAGED_ROLES.has(role)) return;
             
-            // Ele vai usar a lista HIDDEN_EMAILS que atualizamos acima para esconder vocês dois
             if (!HIDDEN_EMAILS.includes(userData.email)) users.push({ ...userData, role });
         });
 
-        users.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        // --- ORDENAÇÃO POR DEPARTAMENTO E E-MAIL (COM CORREÇÃO PARA NÚMEROS) ---
+        users.sort((a, b) => {
+            // 1º Critério: Departamento (Role)
+            const roleCompare = (a.role || "").localeCompare(b.role || "");
+            
+            if (roleCompare !== 0) return roleCompare;
+
+            // 2º Critério: E-mail com ordenação natural (resolve o caso do 10 antes do 2)
+            return (a.email || "").localeCompare(b.email || "", undefined, { 
+                numeric: true, 
+                sensitivity: 'base' 
+            });
+        });
 
         users.forEach((u) => {
             const tr = document.createElement("tr");

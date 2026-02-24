@@ -46,20 +46,23 @@ function initApp() {
         document.body.classList.remove("broker-view-only");
     }
 
-    if (!state.appInitialized) {
+   if (!state.appInitialized) {
         setupUIInteractions();
         setupAppointmentLogic();
         state.appInitialized = true;
-
-        renderUserInfo();
-
-        setTimeout(() => {
-            if (state.userProfile && normalizeRole(state.userProfile.role) === "admin") {
-                initReports();
-            }
-            renderUserInfo();
-        }, 1000);
     }
+
+    // Movemos a validação para fora do 'appInitialized'. 
+    // Assim, sempre que trocar de usuário, ele refaz a checagem corretamente.
+    setTimeout(() => {
+        const userRole = state.userProfile ? normalizeRole(state.userProfile.role) : "";
+        
+        if (userRole === "admin" || userRole === "master") {
+            initReports(); // Mostra para Admin e Master
+        } 
+        renderUserInfo();
+    }, 1000);
+    
 
     cleanupExpiredDeletedAppointments().catch((e) => console.error("Erro na limpeza de excluídos:", e));
 
