@@ -229,7 +229,7 @@ export function openAppointmentModal(appt, defaults = {}, onDeleteCallback) {
     const withinGraceWindow = Boolean(createdAtMs) && (Date.now() - createdAtMs <= 15 * 60 * 1000);
     
     // Se estiver bloqueado (isLocked), NINGUÉM pode deletar. O botão vai sumir.
-    const canDelete = isCoreEditor && !isLocked;
+    const canDelete = canManageAll && !isLocked;
 
     const isEvent = appt ? appt.isEvent : false;
     divEventType.classList.toggle("hidden", !canSaveAny);
@@ -262,6 +262,11 @@ export function openAppointmentModal(appt, defaults = {}, onDeleteCallback) {
         // --- RECORRÊNCIA (Admin/Master): exibe também ao converter visita em Evento/Aviso ---
         const shouldShowRecurrence = canManageAll && isEvt;
         recurrenceSection.classList.toggle("hidden", !shouldShowRecurrence);
+        // NOVO: Bloqueia os campos de repetição se a agenda estiver bloqueada (horário expirado)
+        const recEndDate = document.getElementById("recurrence-end-date");
+        const recDays = document.querySelectorAll("input[name='recurrence-day']");
+        if(recEndDate) recEndDate.disabled = disableCore;
+        if(recDays) recDays.forEach(chk => chk.disabled = disableCore);
 
         if (isEvt) {
             propertiesContainer.classList.add("hidden");
@@ -276,7 +281,8 @@ export function openAppointmentModal(appt, defaults = {}, onDeleteCallback) {
             if (whatsContainer) whatsContainer.innerHTML = ""; 
         } else {
             propertiesContainer.classList.remove("hidden");
-            if (btnAddProperty) btnAddProperty.classList.toggle("hidden", !canInteractGeneral);
+            const canAddProperty = isCoreEditor && !isLocked;
+            if (btnAddProperty) btnAddProperty.classList.toggle("hidden", !canAddProperty);
             inpEventComment.parentElement.classList.add("hidden");
             if(clContainer) clContainer.classList.remove("hidden");
             if(clientHeader) clientHeader.classList.remove("hidden");
@@ -290,8 +296,9 @@ export function openAppointmentModal(appt, defaults = {}, onDeleteCallback) {
                 renderWhatsappButton();
             }
             
-            enforceClientRowPermissions(isLocked, canManageAll, false);
-            enforcePropertyRowPermissions(isLocked, canManageAll, false);
+            // CHAMADAS CORRIGIDAS (AGORA COM OS PARÂMETROS CORRETOS)
+            enforceClientRowPermissions(isLocked, canManageAll, false, amIShared);
+            enforcePropertyRowPermissions(isLocked, canManageAll, false, isCoreEditor);
         }
     };
 
@@ -307,7 +314,6 @@ export function openAppointmentModal(appt, defaults = {}, onDeleteCallback) {
     }
 
     // --- BOTÕES DE AÇÃO VISUAL ---
-    // MUDANÇA 3: Botão Salvar visível se puder salvar algo (mesmo que só o status)
     btnSave.classList.toggle("hidden", !showSaveButton);
     btnDel.classList.toggle("hidden", !canDelete);
     
@@ -362,17 +368,20 @@ export function openAppointmentModal(appt, defaults = {}, onDeleteCallback) {
         updateFormState();
         renderHistoryLogs(appt, canManageAll);
 
-        if (isEvent) {
+       if (isEvent) {
             inpEventComment.value = appt.eventComment || "";
             renderPropertiesInput([], false, appt);
         } else {
             renderPropertiesInput(getPropertyList(appt), canInteractGeneral && !isEvent, appt);
             // Clientes só editáveis se não bloqueado geral
             renderClientsInput(getClientList(appt), canInteractGeneral, amICreator, canManageAll, appt);
+            
+            // --- CORREÇÃO: Força o bloqueio de permissões imediatamente após desenhar as linhas ---
+            enforceClientRowPermissions(isLocked, canManageAll, false, amIShared);
+            enforcePropertyRowPermissions(isLocked, canManageAll, false, isCoreEditor);
         }
         inpStart.value = appt.startTime;
         inpEnd.value = appt.endTime;
-
         if ((canInteractGeneral) && !isEvent) {
             renderWhatsappButton();
         }
@@ -389,8 +398,9 @@ export function openAppointmentModal(appt, defaults = {}, onDeleteCallback) {
         if(onDeleteCallback) onDeleteCallback(appt);
     };
     
-    setupClientObserver(enforceClientRowPermissions, isLocked, canManageAll, chkIsEvent);
-    setupPropertyObserver(enforcePropertyRowPermissions, isLocked, canManageAll, chkIsEvent);
+    // CHAMADAS CORRIGIDAS DOS OBSERVERS
+    setupClientObserver(enforceClientRowPermissions, isLocked, canManageAll, chkIsEvent, amIShared);
+    setupPropertyObserver(enforcePropertyRowPermissions, isLocked, canManageAll, chkIsEvent, isCoreEditor);
 }
 
 // --- FUNÇÕES AUXILIARES DE UI ---
@@ -442,7 +452,8 @@ function populateDateField(inpDate, dateStatic, btnChangeDate, appt, defaults) {
     inpDate.classList.remove("hidden");
 }
 
-function enforceClientRowPermissions(isLocked, canManageAll, isEvtMode) {
+// --- PERMISSÕES DE CLIENTE (CORRIGIDAS) ---
+function enforceClientRowPermissions(isLocked, canManageAll, isEvtMode, amIShared = false) {
     const rows = document.querySelectorAll(".client-item-row");
     if(isEvtMode) return; 
 
@@ -450,9 +461,13 @@ function enforceClientRowPermissions(isLocked, canManageAll, isEvtMode) {
         const addedByInput = row.querySelector(".client-added-by");
         const rowOwner = String(addedByInput ? addedByInput.value : "").trim().toLowerCase();
         const myEmail = String(state.userProfile.email || "").trim().toLowerCase();
-        const isMine = (rowOwner === myEmail);
         
-        // Clientes: Se está bloqueado, ninguém edita dados do cliente.
+        // Permite edição de linhas novas (rowOwner === "") ou linhas que o usuário próprio criou
+        const isMine = rowOwner === "" || rowOwner === myEmail;
+        
+        // CORREÇÃO AQUI: Removemos o 'amIShared' desta validação.
+        // O usuário compartilhado só pode editar se for 'isMine' (novo cliente adicionado por ele).
+        // Clientes do criador original ficarão bloqueados visualmente.
         let canEditThisRow = (!isLocked) && (canManageAll || isMine);
         
         const nameInp = row.querySelector(".client-name-input");
@@ -467,18 +482,17 @@ function enforceClientRowPermissions(isLocked, canManageAll, isEvtMode) {
             btnDel.style.display = showRemove ? "flex" : "none";
             if (btnWrap) btnWrap.style.display = showRemove ? "flex" : "none";
         }
-
     });
 }
 
-function setupClientObserver(enforceFn, isLocked, canManageAll, chkIsEvent) {
+function setupClientObserver(enforceFn, isLocked, canManageAll, chkIsEvent, amIShared) {
     const clientsContainer = document.getElementById("clients-container");
     if(clientsContainer) {
         if(clientsContainer._permissionObserver) {
             clientsContainer._permissionObserver.disconnect();
         }
         const observer = new MutationObserver(() => {
-            enforceFn(isLocked, canManageAll, chkIsEvent.checked);
+            enforceFn(isLocked, canManageAll, chkIsEvent.checked, amIShared);
         });
         observer.observe(clientsContainer, { childList: true, subtree: true });
         clientsContainer._permissionObserver = observer;
@@ -515,10 +529,10 @@ function setupNewAppointmentUI(defaults, inpBroker, brokerStatic, btnChangeBroke
 
     const inpStatus = document.getElementById("form-status");
     const inpStatusObs = document.getElementById("form-status-obs");
-    const inpStatusRented = document.getElementById("form-status-rented"); // NOVO: Limpa checkbox em novo agendamento
+    const inpStatusRented = document.getElementById("form-status-rented"); 
     if(inpStatus) inpStatus.value = "agendada";
     if(inpStatusObs) inpStatusObs.value = "";
-    if(inpStatusRented) inpStatusRented.checked = false; // NOVO: Garante que vem desmarcado
+    if(inpStatusRented) inpStatusRented.checked = false; 
 
     const chkIsEvent = document.getElementById("form-is-event");
     if (chkIsEvent) {
@@ -658,28 +672,29 @@ export function renderClientsInput(clients, formEditable, isCreator, isAdmin, ap
     }
 }
 
-function getPropertiesFromUI() {
+// --- FUNÇÃO COPIADA DA LÓGICA DE CLIENTES ---
+export function getPropertiesFromUI() {
+    let propertiesData = [];
     const rows = document.querySelectorAll(".property-item-row");
-    const properties = [];
-    rows.forEach((row) => {
+    
+    rows.forEach(row => {
         const refInput = row.querySelector(".property-reference-input");
         const addressInput = row.querySelector(".property-address-input");
-        const addedByInput = row.querySelector(".property-added-by");
-        const addedByNameInput = row.querySelector(".property-added-by-name");
-        const addedAtInput = row.querySelector(".property-added-at");
-        const reference = refInput ? refInput.value.trim() : "";
-        const propertyAddress = addressInput ? addressInput.value.trim() : "";
-        if (reference || propertyAddress) {
-            properties.push({
-                reference,
-                propertyAddress,
-                addedBy: addedByInput ? addedByInput.value : state.userProfile.email,
-                addedByName: addedByNameInput ? addedByNameInput.value : (state.userProfile.name || ""),
-                addedAt: addedAtInput ? addedAtInput.value : new Date().toLocaleString("pt-BR")
-            });
+        
+        if (refInput || addressInput) {
+            const refVal = refInput ? refInput.value.trim() : "";
+            const addrVal = addressInput ? addressInput.value.trim() : "";
+            
+            if (refVal || addrVal) {
+                propertiesData.push({
+                    reference: refVal,
+                    propertyAddress: addrVal
+                }); // Nada de addedBy, addedAt, etc.
+            }
         }
     });
-    return properties;
+    
+    return propertiesData;
 }
 
 function getFirstPropertyField(field) {
@@ -687,27 +702,20 @@ function getFirstPropertyField(field) {
     return field === "reference" ? firstProperty.reference : firstProperty.propertyAddress;
 }
 
-function renderPropertiesInput(properties, editable, apptContext = null) {
+function renderPropertiesInput(properties, editable) {
     const container = document.getElementById("properties-container");
     if (!container) return;
     container.innerHTML = "";
 
-    // Pega o criador do agendamento se a linha não tiver dono (evita usar o usuário atual como fallback em visitas antigas)
-    const fallbackEmail = apptContext ? apptContext.createdBy : state.userProfile.email;
-    const fallbackName = apptContext ? apptContext.createdByName : (state.userProfile.name || "");
-    const fallbackDate = apptContext && apptContext.createdAt ? new Date(apptContext.createdAt).toLocaleString("pt-BR") : new Date().toLocaleString("pt-BR");
-
     const propList = (properties && properties.length > 0) ? properties : [{ reference: "", propertyAddress: "" }];
+    
     propList.forEach((prop, idx) => {
         addPropertyRow(
             prop.reference || "",
             prop.propertyAddress || "",
             idx,
-            editable,
-            prop.addedBy || fallbackEmail,
-            prop.addedByName || fallbackName,
-            prop.addedAt || fallbackDate
-        );
+            editable
+        ); // Envia apenas a Ref, Endereço, index e se é editável.
     });
 }
 
@@ -720,7 +728,8 @@ function togglePropertiesDisabled(disabled, disableRemove = false) {
     });
 }
 
-function enforcePropertyRowPermissions(isLocked, canManageAll, isEvtMode) {
+// --- PERMISSÕES DE IMÓVEL (CORRIGIDAS) ---
+function enforcePropertyRowPermissions(isLocked, canManageAll, isEvtMode, isCoreEditor = true) {
     const rows = document.querySelectorAll(".property-item-row");
     if (isEvtMode) return;
 
@@ -728,8 +737,12 @@ function enforcePropertyRowPermissions(isLocked, canManageAll, isEvtMode) {
         const addedByInput = row.querySelector(".property-added-by");
         const rowOwner = String(addedByInput ? addedByInput.value : "").trim().toLowerCase();
         const myEmail = String(state.userProfile.email || "").trim().toLowerCase();
-        const isMine = rowOwner === myEmail;
-        const canEditThisRow = (!isLocked) && (canManageAll || isMine);
+        
+        // Garante que a linha nova seja do criador
+        const isMine = rowOwner === "" || rowOwner === myEmail;
+        
+        // Compartilhados (!isCoreEditor) são bloqueados
+        const canEditThisRow = (!isLocked) && isCoreEditor && (canManageAll || isMine);
 
         const refInp = row.querySelector(".property-reference-input");
         const addrInp = row.querySelector(".property-address-input");
@@ -746,14 +759,14 @@ function enforcePropertyRowPermissions(isLocked, canManageAll, isEvtMode) {
     });
 }
 
-function setupPropertyObserver(enforceFn, isLocked, canManageAll, chkIsEvent) {
+function setupPropertyObserver(enforceFn, isLocked, canManageAll, chkIsEvent, isCoreEditor) {
     const propertiesContainer = document.getElementById("properties-container");
     if (propertiesContainer) {
         if (propertiesContainer._permissionObserver) {
             propertiesContainer._permissionObserver.disconnect();
         }
         const observer = new MutationObserver(() => {
-            enforceFn(isLocked, canManageAll, chkIsEvent.checked);
+            enforceFn(isLocked, canManageAll, chkIsEvent.checked, isCoreEditor);
         });
         observer.observe(propertiesContainer, { childList: true, subtree: true });
         propertiesContainer._permissionObserver = observer;

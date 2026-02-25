@@ -410,38 +410,14 @@ export function addClientRow(nameVal, phoneVal, addedByVal, index, rowEditable, 
     container.appendChild(row);
     refreshClientRemoveButtons();
 }
-export function addPropertyRow(
-    referenceVal = "",
-    addressVal = "",
-    index = 0,
-    rowEditable = true,
-    addedByVal = "",
-    addedByNameVal = "",
-    addedAtVal = ""
-) {
+export function addPropertyRow(referenceVal = "", addressVal = "", index = 0, rowEditable = true) {
     const container = document.getElementById("properties-container");
+    if (!container) return;
+
     const row = document.createElement("div");
     row.className = "property-item-row";
-
-    const hiddenAddedBy = document.createElement("input");
-    hiddenAddedBy.type = "hidden";
-    hiddenAddedBy.className = "property-added-by";
-    hiddenAddedBy.value = addedByVal || state.userProfile.email;
-    row.appendChild(hiddenAddedBy);
-
-    const hiddenAddedByName = document.createElement("input");
-    hiddenAddedByName.type = "hidden";
-    hiddenAddedByName.className = "property-added-by-name";
-    hiddenAddedByName.value = addedByNameVal || state.userProfile.name || "";
-    row.appendChild(hiddenAddedByName);
-
-    const hiddenAddedAt = document.createElement("input");
-    hiddenAddedAt.type = "hidden";
-    hiddenAddedAt.className = "property-added-at";
-    hiddenAddedAt.value = addedAtVal || new Date().toLocaleString("pt-BR");
-    row.appendChild(hiddenAddedAt);
     
-    // Configura o Flexbox da linha
+    // --- Configuração do Flexbox da linha ---
     row.style.display = "flex";
     row.style.flexWrap = "wrap";
     row.style.gap = "10px";
@@ -472,7 +448,7 @@ export function addPropertyRow(
 
     // --- CAMPO ENDEREÇO ---
     const divAddress = document.createElement("div");
-    divAddress.style.flex = "1"; // Ocupa o espaço restante
+    divAddress.style.flex = "1";
     const labelAddress = document.createElement("label");
     labelAddress.innerText = "Imóvel / Endereço / Obs.";
     labelAddress.style.display = "block";
@@ -490,7 +466,7 @@ export function addPropertyRow(
 
     // --- BOTÃO DE REMOVER (LIXEIRA) ---
     const btnContainer = document.createElement("div");
-    btnContainer.className = "remove-btn-container"; // Adicionado classe para facilitar a busca
+    btnContainer.className = "remove-btn-container"; 
     btnContainer.style.display = "flex";
     btnContainer.style.alignItems = "flex-end"; 
 
@@ -503,25 +479,18 @@ export function addPropertyRow(
     btnRemove.style.height = "38px"; 
 
     btnRemove.onclick = () => {
-        row.remove(); // Remove a linha atual
-        
-        // Pega todas as linhas que sobraram
+        row.remove();
         const rows = Array.from(container.querySelectorAll('.property-item-row'));
-        
         rows.forEach((r, idx) => {
-            // Re-enumera as labels (Ref. 1, Ref. 2, etc)
             const refLabel = r.querySelector('label');
             if (refLabel) refLabel.innerText = idx === 0 ? 'Ref.' : `Ref. ${idx + 1}`;
             
-            // ATUALIZA O LIXO DAS LINHAS RESTANTES
             const rBtnContainer = r.querySelector('.remove-btn-container');
             if (rBtnContainer) {
-                 // Se sobrou só 1 linha, esconde o lixo dela. Se sobrou mais de 1, garante que apareça.
                  rBtnContainer.style.display = rows.length === 1 ? "none" : "flex";
             }
         });
         
-        // Retorna o botão de "+ Imóvel" caso a quantidade caia para baixo de 4
         const btnAddProperty = document.getElementById("btn-add-property");
         if (btnAddProperty && rows.length < 4) {
             btnAddProperty.style.display = ""; 
@@ -530,33 +499,16 @@ export function addPropertyRow(
 
     btnContainer.appendChild(btnRemove);
 
-    // Monta a linha e adiciona ao container
     row.appendChild(divRef);
     row.appendChild(divAddress);
     row.appendChild(btnContainer);
 
-    if (hiddenAddedByName.value && hiddenAddedAt.value) {
-        const infoDiv = document.createElement("div");
-        infoDiv.style.flex = "1 0 100%";
-        infoDiv.style.fontSize = "0.7rem";
-        infoDiv.style.color = "#94a3b8";
-        infoDiv.style.marginTop = "-4px";
-        infoDiv.style.fontStyle = "italic";
-        infoDiv.style.lineHeight = "1.2";
-        infoDiv.style.paddingLeft = "0";
-        infoDiv.innerText = `Cadastrado por: ${hiddenAddedByName.value} em ${hiddenAddedAt.value}`;
-        row.appendChild(infoDiv);
-    }
-
     container.appendChild(row);
 
-    // --- ATUALIZAÇÃO IMEDIATA DO LIXO APÓS ADICIONAR ---
-    // Sempre que uma linha nova entra, precisamos checar o total para saber se mostramos ou não os lixos
     const allRows = container.querySelectorAll('.property-item-row');
     allRows.forEach((r) => {
         const rBtnContainer = r.querySelector('.remove-btn-container');
         if (rBtnContainer) {
-            // Se no total tem só 1 linha, o lixo fica oculto. Se tiver 2 ou mais, o lixo de TODAS fica visível.
             rBtnContainer.style.display = allRows.length === 1 ? "none" : "flex";
         }
     });

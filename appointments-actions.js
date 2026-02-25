@@ -14,15 +14,32 @@ function normalizeOwnerEmail(value, fallback = "") {
     return String(value || fallback || "").trim().toLowerCase();
 }
 
-function protectRowsByOwnership(oldRows, incomingRows, userEmail, canManageAll) {
-    if (canManageAll) return incomingRows;
-
+function protectRowsByOwnership(oldRows, incomingRows, userEmail, userName, canManageAll) {
     const myEmail = normalizeOwnerEmail(userEmail);
     const oldList = Array.isArray(oldRows) ? oldRows : [];
     const incomingList = Array.isArray(incomingRows) ? incomingRows : [];
+
+    if (canManageAll) {
+        return incomingList.map(row => {
+            return {
+                ...row,
+                addedBy: row.addedBy || userEmail,
+                addedByName: row.addedByName || userName,
+                addedAt: row.addedAt || new Date().toLocaleString("pt-BR")
+            };
+        });
+    }
+
     const editableIncomingRows = incomingList.filter((row) => {
         const owner = normalizeOwnerEmail(row?.addedBy, myEmail);
         return owner === myEmail;
+    }).map(row => {
+        return {
+            ...row,
+            addedBy: row.addedBy || userEmail,
+            addedByName: row.addedByName || userName,
+            addedAt: row.addedAt || new Date().toLocaleString("pt-BR")
+        };
     });
 
     const protectedRows = oldList.filter((row) => {
@@ -30,7 +47,21 @@ function protectRowsByOwnership(oldRows, incomingRows, userEmail, canManageAll) 
         return owner && owner !== myEmail;
     });
 
-    return [...editableIncomingRows, ...protectedRows];
+    const combinedRows = [...protectedRows, ...editableIncomingRows];
+
+    combinedRows.sort((a, b) => {
+        const parseDate = (dateStr) => {
+            if (!dateStr) return 0;
+            const match = String(dateStr).match(/(\d{2})\/(\d{2})\/(\d{4})[,\s]+(\d{2}):(\d{2}):(\d{2})/);
+            if (match) {
+                return new Date(match[3], match[2]-1, match[1], match[4], match[5], match[6]).getTime();
+            }
+            return 0;
+        };
+        return parseDate(a.addedAt) - parseDate(b.addedAt);
+    });
+
+    return combinedRows;
 }
 
 // --- AÇÃO: SALVAR AGENDAMENTO ---
@@ -63,8 +94,6 @@ export async function saveAppointmentAction(formData) {
 
     const canEditStatus = isNew ? true : (amICreator || canManageAll);
 
-    // Regra: horário aberto => edição conforme permissão normal.
-    // horário encerrado => apenas status (criador/admin/master).
     if (isLocked && !canEditStatus) {
         throw new Error("Ação Bloqueada: este agendamento está fora do horário permitido para edição.");
     }
@@ -82,7 +111,6 @@ export async function saveAppointmentAction(formData) {
     const linkedConsultantObj = state.availableConsultants ? state.availableConsultants.find(c => c.email === linkedConsultantEmail) : null;
     const linkedConsultantName = linkedConsultantObj ? linkedConsultantObj.name : (linkedConsultantEmail === finalOwnerEmail ? finalOwnerName : linkedConsultantEmail);
 
-    // Objeto base para Salvar
     const nowIso = new Date().toISOString();
 
     const appointmentData = {
@@ -94,7 +122,7 @@ export async function saveAppointmentAction(formData) {
         
         status: formData.status || "agendada",
         statusObservation: formData.statusObservation || "",
-        isRented: formData.isRented || false, // NOVO CAMPO SALVO AQUI
+        isRented: formData.isRented || false, 
 
         eventComment: formData.eventComment || "",
         properties: formData.properties || [],
@@ -132,17 +160,12 @@ export async function saveAppointmentAction(formData) {
         appointmentData.createdBy = oldAppt.createdBy;
         appointmentData.createdByName = oldAppt.createdByName;
     } else if (!isNew && !canManageAll) {
+        const amICreator = (oldAppt.createdBy === state.userProfile.email);
+        if (!amICreator) {
+            appointmentData.sharedWith = oldAppt.sharedWith || [];
+        }
         appointmentData.clients = protectRowsByOwnership(
-            oldAppt.clients,
-            appointmentData.clients,
-            state.userProfile.email,
-            canManageAll
-        );
-        appointmentData.properties = protectRowsByOwnership(
-            oldAppt.properties,
-            appointmentData.properties,
-            state.userProfile.email,
-            canManageAll
+            oldAppt.clients, appointmentData.clients, state.userProfile.email, state.userProfile.name, canManageAll
         );
     }
 
@@ -152,25 +175,26 @@ export async function saveAppointmentAction(formData) {
         appointmentData.editedAt = null;
         if (!formData.isEvent) {
             const conflict = checkOverlap(appointmentData.brokerId, appointmentData.date, appointmentData.startTime, appointmentData.endTime, null, appointmentData.isEvent);
-            if (conflict) throw new Error(conflict);
+            if (conflict) throw new Error("Já existe um agendamento ativo neste horário para este corretor.");
         }
     } else {
         if (!formData.isEvent) {
             const conflict = checkOverlap(appointmentData.brokerId, appointmentData.date, appointmentData.startTime, appointmentData.endTime, id, appointmentData.isEvent);
-            if (conflict) throw new Error(conflict);
+            if (conflict) throw new Error("Já existe um agendamento ativo neste horário para este corretor.");
         }
     }
 
-    // --- REGISTRO DE HISTÓRICO (Audit Log) ---
+    // --- REGISTRO DE HISTÓRICO (Audit Log) E COMPARAÇÃO PARA O WHATSAPP ---
+    let detectedChanges = [];
     if (!isNew) {
         const historyLog = oldAppt.history ? [...oldAppt.history] : [];
-        const changes = detectChanges(oldAppt, appointmentData);
+        detectedChanges = detectChanges(oldAppt, appointmentData);
         
-        if (changes.length > 0) {
+        if (detectedChanges.length > 0) {
             historyLog.push({
                 date: new Date().toLocaleString("pt-BR"),
                 user: state.userProfile.name,
-                action: changes.join("; ")
+                action: detectedChanges.join("; ")
             });
             appointmentData.history = historyLog;
         } else {
@@ -218,6 +242,34 @@ export async function saveAppointmentAction(formData) {
         }
 
         await updateDoc(doc(db, "appointments", id), appointmentData);
+        
+        // --- NOVO: LÓGICA DO POPUP DO WHATSAPP COM FILTRO (CORRIGIDO) ---
+        // Se NÃO for um agendamento novo, NÃO for um evento, e houver mudanças:
+        if (!isNew && !appointmentData.isEvent && detectedChanges && detectedChanges.length > 0) {
+            const oldStatus = String(oldAppt?.status || "").trim().toLowerCase();
+            const newStatus = String(appointmentData?.status || "").trim().toLowerCase();
+            const becameCanceled =
+                (newStatus === "cancelada" || newStatus === "cancelado") &&
+                !(oldStatus === "cancelada" || oldStatus === "cancelado");
+
+            if (becameCanceled) {
+                await promptBrokerNotification("cancel", appointmentData, []);
+            } else {
+                // Lista de textos que NÃO devem acionar o aviso ao corretor
+                const ignorePrefixes = ["Status:", "Obs. Status:", "Imóvel Alugado:", "Partilhado com:"];
+
+                // Filtra as mudanças, mantendo apenas as relevantes para o corretor
+                const notifyChanges = detectedChanges.filter(changeMsg => {
+                    return !ignorePrefixes.some(prefix => changeMsg.startsWith(prefix));
+                });
+
+                // Só abre a pergunta do WhatsApp se sobrou alguma mudança relevante
+                if (notifyChanges.length > 0) {
+                    await promptBrokerNotification("edit", appointmentData, notifyChanges);
+                }
+            }
+        }
+
         return {
             message: "Agendamento salvo com sucesso!",
             actionType: "update",
@@ -229,17 +281,66 @@ export async function saveAppointmentAction(formData) {
     }
 }
 
-// --- AÇÃO: DELETAR AGENDAMENTO ---
+// --- AÇÃO: DELETAR AGENDAMENTO (Segurança Reforçada) ---
 export async function deleteAppointmentAction(appt) {
+    // Verifica o papel do usuário logado
+    const role = String(state.userProfile?.role || "").trim().toLowerCase();
+    const canManageAll = (role === "admin" || role === "master");
+
+    if (!canManageAll) {
+        throw new Error("Ação Bloqueada: Apenas Administradores ou Master podem excluir agendamentos.");
+    }
+
     try {
         await updateDoc(doc(db, "appointments", appt.id), {
             deletedAt: new Date().toISOString(),
             deletedBy: state.userProfile?.email || "unknown"
         });
+
         return true;
     } catch (err) {
         console.error("Erro ao deletar:", err);
         throw err;
+    }
+}
+
+// --- LÓGICA DO POPUP DO WHATSAPP ---
+async function promptBrokerNotification(actionType, apptData, changes) {
+    const broker = BROKERS.find(b => b.id === apptData.brokerId);
+    if (!broker) return; // Corretor não encontrado
+
+    let phone = broker.phone || broker.telefone || "";
+    phone = phone.replace(/\D/g, "");
+    if (!phone) return; // Sem telefone válido
+
+    // Adiciona DDI do Brasil caso o formato esteja num padrão normal (10/11 dígitos sem DDI)
+    if (phone.length === 10 || phone.length === 11) {
+        phone = "55" + phone;
+    }
+
+    const apptDate = apptData.date.split('-').reverse().join('/');
+    let msg = `Olá ${broker.name}, `;
+    
+    if (actionType === "delete" || actionType === "cancel") {
+        msg += `a visita do dia *${apptDate}* às *${apptData.startTime}* foi *CANCELADA/EXCLUÍDA* no sistema.\n\n`;
+    } else {
+        msg += `a visita do dia *${apptDate}* às *${apptData.startTime}* foi *ALTERADA* no sistema.\n\n`;
+        msg += `*O que mudou:*\n- ${changes.join("\n- ")}\n\n`;
+    }
+    
+    const whatsUrl = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+    
+    const userWantsToNotify = await showDialog(
+        "Notificar Corretor?", 
+        `Deseja avisar o corretor ${broker.name} via WhatsApp sobre essa ${actionType === 'delete' ? 'exclusão' : (actionType === 'cancel' ? 'cancelamento' : 'alteração')}?`,
+        [
+            { text: "Apenas salvar/excluir", value: false, class: "btn-secondary" },
+            { text: "Sim, enviar WhatsApp", value: true, class: "btn-confirm" }
+        ]
+    );
+
+    if (userWantsToNotify) {
+        window.open(whatsUrl, "_blank");
     }
 }
 
@@ -257,31 +358,21 @@ function detectChanges(oldAppt, newData) {
         createdBy: "Responsável"
     };
 
-    // --- FUNÇÃO AUXILIAR: PROCURA O NOME PELO EMAIL OU ID ---
     const getName = (idOrEmail) => {
         if (!idOrEmail) return null;
-        
-        // 1. Tenta encontrar na lista de Corretores
         let person = BROKERS.find(b => b.id === idOrEmail || b.email === idOrEmail);
         if (person && person.name) return person.name;
-        
-        // 2. Tenta encontrar na lista de Consultoras (guardada no state)
         if (state.availableConsultants) {
             person = state.availableConsultants.find(c => c.id === idOrEmail || c.email === idOrEmail);
             if (person && person.name) return person.name;
         }
-
-        // 3. Tenta encontrar na lista geral de utilizadores (como prevenção)
         if (state.users) {
             person = state.users.find(u => u.id === idOrEmail || u.email === idOrEmail);
             if (person && person.name) return person.name;
         }
-
-        // Se não encontrar em lado nenhum, mostra o e-mail que estava a ser enviado
         return idOrEmail; 
     };
     
-    // --- Compara campos simples ---
     for (let key in fields) {
         let oldVal = oldAppt[key];
         let newVal = newData[key];
@@ -313,7 +404,6 @@ function detectChanges(oldAppt, newData) {
         }
     }
     
-    // --- Compara Imóveis detalhadamente ---
     const formatProps = (props) => {
         if (!props || props.length === 0) return "Nenhum";
         return props.map(p => {
@@ -330,7 +420,6 @@ function detectChanges(oldAppt, newData) {
         changes.push(`Imóveis: de '${oldPropsStr}' para '${newPropsStr}'`);
     }
 
-    // --- Compara Clientes detalhadamente ---
     const formatClients = (clients) => {
         if (!clients || clients.length === 0) return "Nenhum";
         return clients.map(c => c.name?.trim() || "Sem Nome").join(", ");
@@ -342,10 +431,8 @@ function detectChanges(oldAppt, newData) {
          changes.push(`Clientes: de '${oldClientsStr}' para '${newClientsStr}'`);
     }
 
-    // --- Compara Partilha (sharedWith) COM NOMES ---
     const formatShared = (sharedList) => {
         if (!sharedList || sharedList.length === 0) return "Ninguém";
-        // Transforma cada e-mail da lista no nome da pessoa
         return sharedList.map(email => getName(email)).join(", ");
     };
     
@@ -357,6 +444,7 @@ function detectChanges(oldAppt, newData) {
 
     return changes;
 }
+
 function generateRecurrenceDates(startDateStr, endDateStr, daysOfWeekArray) {
     const dates = [];
     let current = new Date(startDateStr + "T12:00:00"); 
